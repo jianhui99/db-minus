@@ -1,7 +1,10 @@
+use crate::connection::config::Driver;
 use crate::connection::pool::DbPool;
+use crate::dialect::{placeholder, qualified_table, quote_ident};
 use crate::error::AppError;
+use crate::schema::{integer_primary_key, list_columns};
 use futures::TryStreamExt;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::mysql::MySqlRow;
 use sqlx::postgres::PgRow;
@@ -214,4 +217,167 @@ async fn fetch_rows(pool: &DbPool, sql: &str, max_rows: usize) -> Result<QueryRe
     }
 
     Ok(QueryResult { columns, rows, affected_rows: None, duration_ms: 0, truncated })
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Sort {
+    pub column: String,
+    pub desc: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum Cursor {
+    Keyset { last: i64 },
+    Offset { offset: u64 },
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TablePageRequest {
+    pub namespace: String,
+    pub table: String,
+    pub sort: Option<Sort>,
+    pub cursor: Option<Cursor>,
+    pub limit: u32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TablePage {
+    pub columns: Vec<ColumnMeta>,
+    pub rows: Vec<Vec<Value>>,
+    pub next_cursor: Option<Cursor>,
+}
+
+pub async fn fetch_table_page(pool: &DbPool, req: &TablePageRequest) -> Result<TablePage, AppError> {
+    let driver = pool.driver();
+    let table = qualified_table(driver, &req.namespace, &req.table);
+    let limit = req.limit.clamp(1, 1000) as usize;
+
+    // 排序列必须在表列白名单内，杜绝拼接注入
+    if let Some(sort) = &req.sort {
+        let cols = list_columns(pool, &req.namespace, &req.table).await?;
+        if !cols.iter().any(|c| c.name == sort.column) {
+            return Err(AppError::NotFound(format!("sort column '{}' not found", sort.column)));
+        }
+    }
+
+    let int_pk = if req.sort.is_none() {
+        integer_primary_key(pool, &req.namespace, &req.table).await?
+    } else {
+        None
+    };
+
+    let work = async {
+        match int_pk {
+            Some(pk) => fetch_keyset(pool, driver, &table, &pk, req, limit).await,
+            None => fetch_offset(pool, driver, &table, req, limit).await,
+        }
+    };
+    tokio::time::timeout(QUERY_TIMEOUT, work)
+        .await
+        .map_err(|_| AppError::Timeout("query timed out after 30s".into()))?
+}
+
+async fn fetch_keyset(
+    pool: &DbPool,
+    driver: Driver,
+    table: &str,
+    pk: &str,
+    req: &TablePageRequest,
+    limit: usize,
+) -> Result<TablePage, AppError> {
+    let pk_quoted = quote_ident(driver, pk);
+    let last = match req.cursor {
+        Some(Cursor::Keyset { last }) => Some(last),
+        _ => None,
+    };
+    let sql = match last {
+        Some(_) => format!(
+            "SELECT * FROM {table} WHERE {pk_quoted} > {} ORDER BY {pk_quoted} LIMIT {limit}",
+            placeholder(driver, 1)
+        ),
+        None => format!("SELECT * FROM {table} ORDER BY {pk_quoted} LIMIT {limit}"),
+    };
+
+    let (columns, rows) = run_page_query(pool, &sql, last).await?;
+
+    let pk_index = columns.iter().position(|c| c.name == pk);
+    let next_cursor = if rows.len() < limit {
+        None
+    } else {
+        pk_index
+            .and_then(|i| rows.last().and_then(|r| r[i].as_i64()))
+            .map(|last| Cursor::Keyset { last })
+    };
+    Ok(TablePage { columns, rows, next_cursor })
+}
+
+async fn fetch_offset(
+    pool: &DbPool,
+    driver: Driver,
+    table: &str,
+    req: &TablePageRequest,
+    limit: usize,
+) -> Result<TablePage, AppError> {
+    let offset = match req.cursor {
+        Some(Cursor::Offset { offset }) => offset,
+        _ => 0,
+    };
+    let order = match &req.sort {
+        Some(sort) => format!(
+            " ORDER BY {} {}",
+            quote_ident(driver, &sort.column),
+            if sort.desc { "DESC" } else { "ASC" }
+        ),
+        None => String::new(),
+    };
+    let sql = format!("SELECT * FROM {table}{order} LIMIT {limit} OFFSET {offset}");
+    let (columns, rows) = run_page_query(pool, &sql, None).await?;
+    let next_cursor = if rows.len() < limit {
+        None
+    } else {
+        Some(Cursor::Offset { offset: offset + rows.len() as u64 })
+    };
+    Ok(TablePage { columns, rows, next_cursor })
+}
+
+async fn run_page_query(
+    pool: &DbPool,
+    sql: &str,
+    keyset_bind: Option<i64>,
+) -> Result<(Vec<ColumnMeta>, Vec<Vec<Value>>), AppError> {
+    let mut columns = vec![];
+    let mut rows = vec![];
+    match pool {
+        DbPool::Postgres(p) => {
+            let mut q = sqlx::query(sql);
+            if let Some(v) = keyset_bind {
+                q = q.bind(v);
+            }
+            let fetched = q.fetch_all(p).await?;
+            for row in &fetched {
+                if columns.is_empty() {
+                    columns = pg_columns(row);
+                }
+                rows.push(pg_row_to_values(row));
+            }
+        }
+        DbPool::MySql(p) => {
+            let mut q = sqlx::query(sql);
+            if let Some(v) = keyset_bind {
+                q = q.bind(v);
+            }
+            let fetched = q.fetch_all(p).await?;
+            for row in &fetched {
+                if columns.is_empty() {
+                    columns = mysql_columns(row);
+                }
+                rows.push(mysql_row_to_values(row));
+            }
+        }
+    }
+    Ok((columns, rows))
 }
