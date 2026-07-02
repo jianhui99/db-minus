@@ -2,9 +2,11 @@ use crate::connection::config::{ConfigStore, ConnectionConfig};
 use crate::connection::pool::{test_connection, DbPool, PoolManager};
 use crate::connection::secret;
 use crate::error::AppError;
+use crate::import::{self, ImportResult};
 use crate::query::{self, QueryResult, TablePage, TablePageRequest};
 use crate::safety;
 use crate::schema::{self, ColumnInfo, TableInfo};
+use std::collections::HashMap;
 use tauri::State;
 
 pub struct AppState {
@@ -111,16 +113,49 @@ pub async fn execute_sql(
     if !confirmed {
         let warnings = safety::analyze(&sql);
         if let Some(w) = warnings.first() {
-            let label = match w.kind {
-                safety::DangerKind::DropDatabase => "DROP DATABASE",
-                safety::DangerKind::DropTable => "DROP TABLE",
-                safety::DangerKind::Truncate => "TRUNCATE",
-                safety::DangerKind::DeleteWithoutWhere => "DELETE without WHERE",
-                safety::DangerKind::UpdateWithoutWhere => "UPDATE without WHERE",
-            };
+            let label = safety::danger_label(w.kind);
             return Err(AppError::DangerousStatement(format!("{label}: {}", w.statement)));
         }
     }
     let pool = state.pool(&conn_id).await?;
     query::execute_sql(&pool, &sql).await
+}
+
+/// 按 DangerKind 分组计数，生成一次性总结确认文案，避免逐条弹窗。
+fn summarize_dangers(warnings: &[safety::DangerWarning]) -> String {
+    use safety::DangerKind::*;
+    let order = [DropDatabase, DropTable, Truncate, DeleteWithoutWhere, UpdateWithoutWhere];
+    let mut counts: HashMap<safety::DangerKind, usize> = HashMap::new();
+    for w in warnings {
+        *counts.entry(w.kind).or_insert(0) += 1;
+    }
+    let parts: Vec<String> = order
+        .into_iter()
+        .filter_map(|k| counts.get(&k).map(|c| format!("{c} {}", safety::danger_label(k))))
+        .collect();
+    format!(
+        "This script contains {} dangerous statement{} ({}) — proceed?",
+        warnings.len(),
+        if warnings.len() == 1 { "" } else { "s" },
+        parts.join(", ")
+    )
+}
+
+#[tauri::command]
+pub async fn import_sql_file(
+    state: State<'_, AppState>,
+    conn_id: String,
+    path: String,
+    confirmed: bool,
+) -> Result<ImportResult, AppError> {
+    let script = std::fs::read_to_string(&path)
+        .map_err(|e| AppError::Config(format!("failed to read '{path}': {e}")))?;
+    if !confirmed {
+        let warnings = safety::analyze(&script);
+        if !warnings.is_empty() {
+            return Err(AppError::DangerousStatement(summarize_dangers(&warnings)));
+        }
+    }
+    let pool = state.pool(&conn_id).await?;
+    import::run_import(&pool, &script).await
 }

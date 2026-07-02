@@ -1,5 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { ConnectionManagerDialog } from "@/features/connections/ConnectionManagerDialog";
+import { ImportSqlDialog } from "@/features/import/ImportSqlDialog";
 import { QuickOpenTable } from "@/features/workspace/QuickOpenTable";
 import { Workspace } from "@/features/workspace/Workspace";
 import { useGlobalShortcuts } from "@/lib/shortcuts";
@@ -17,6 +18,7 @@ export default function App() {
         <>
           <Workspace connId={activeConnId} />
           <QuickOpenTable connId={activeConnId} />
+          <ImportSqlDialog connId={activeConnId} />
         </>
       ) : (
         <div className="flex h-full flex-col items-center justify-center gap-3">

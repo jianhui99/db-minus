@@ -1,8 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, Eye, Table2 } from "lucide-react";
 import { useState } from "react";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ipc } from "@/lib/ipc";
+import { useUi } from "@/stores/ui";
 import { useWorkspace } from "@/stores/workspace";
 
 function NamespaceNode({
@@ -74,12 +76,23 @@ export function SchemaTree({ connId }: { connId: string }) {
 
   return (
     <div className="flex h-full flex-col gap-2 p-2">
-      <Input
-        placeholder="Filter tables..."
-        value={filter}
-        onChange={(e) => setFilter(e.target.value)}
-        className="h-7 text-sm"
-      />
+      <div className="flex items-center gap-2">
+        <Input
+          placeholder="Filter tables..."
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          className="h-7 flex-1 text-sm"
+        />
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-7 px-2 text-xs"
+          onClick={() => useUi.getState().setImportOpen(true)}
+          title="Import SQL file (Cmd+I)"
+        >
+          Import
+        </Button>
+      </div>
       <div className="flex-1 overflow-y-auto">
         {isLoading && <span className="text-xs text-muted-foreground">Loading schemas...</span>}
         {error != null && <span className="text-xs text-red-500">Failed to load schemas</span>}

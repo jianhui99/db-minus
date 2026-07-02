@@ -62,6 +62,19 @@ export interface TablePage {
   nextCursor: Cursor | null;
 }
 
+export interface FailedStatement {
+  index: number;
+  sql: string;
+  message: string;
+}
+
+export interface ImportResult {
+  totalStatements: number;
+  executedStatements: number;
+  durationMs: number;
+  failedStatement: FailedStatement | null;
+}
+
 export interface AppError {
   kind: string;
   message: string;
@@ -92,4 +105,6 @@ export const ipc = {
     invoke<TablePage>("fetch_table_page", { connId, req }),
   executeSql: (connId: string, sql: string, confirmed: boolean) =>
     invoke<QueryResult>("execute_sql", { connId, sql, confirmed }),
+  importSqlFile: (connId: string, path: string, confirmed: boolean) =>
+    invoke<ImportResult>("import_sql_file", { connId, path, confirmed }),
 };

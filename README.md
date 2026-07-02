@@ -35,6 +35,7 @@ pnpm exec tsc --noEmit
 | Cmd+K | Connections |
 | Cmd+T | Quick open table |
 | Cmd+E | New SQL tab |
+| Cmd+I | Import SQL file |
 | Cmd+W | Close tab |
 | Cmd+R | Refresh |
 | Cmd+Enter | Run SQL |

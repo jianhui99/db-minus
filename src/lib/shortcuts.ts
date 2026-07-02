@@ -25,6 +25,12 @@ export function useGlobalShortcuts() {
             ws.openSqlTab(ws.activeConnId);
           }
           break;
+        case "i":
+          if (ws.activeConnId) {
+            e.preventDefault();
+            ui.setImportOpen(true);
+          }
+          break;
         case "w":
           e.preventDefault();
           if (ws.activeTabId) ws.closeTab(ws.activeTabId);
