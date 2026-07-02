@@ -28,7 +28,7 @@ export function ConnectionManagerDialog() {
 
   return (
     <Dialog open={connectionsOpen} onOpenChange={setConnectionsOpen}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>Connections</DialogTitle>
         </DialogHeader>
