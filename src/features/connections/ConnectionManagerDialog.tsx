@@ -1,8 +1,9 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Trash2 } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { ConnectionConfig, ipc } from "@/lib/ipc";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { ConnectionConfig, errorMessage, ipc } from "@/lib/ipc";
 import { useUi } from "@/stores/ui";
 import { useWorkspace } from "@/stores/workspace";
 import { ConnectionForm, emptyConfig } from "./ConnectionForm";
@@ -12,6 +13,8 @@ export function ConnectionManagerDialog() {
   const setActiveConn = useWorkspace((s) => s.setActiveConn);
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState<{ config: ConnectionConfig; isNew: boolean } | null>(null);
+  const [deleting, setDeleting] = useState<{ id: string; name: string } | null>(null);
+  const [deleteError, setDeleteError] = useState<string>("");
 
   const { data: connections = [] } = useQuery({
     queryKey: ["connections"],
@@ -24,6 +27,18 @@ export function ConnectionManagerDialog() {
   const connect = (id: string) => {
     setActiveConn(id);
     setConnectionsOpen(false);
+  };
+
+  const handleDelete = async () => {
+    if (!deleting) return;
+    try {
+      await ipc.connectionDelete(deleting.id);
+      refresh();
+      setDeleting(null);
+      setDeleteError("");
+    } catch (e) {
+      setDeleteError(errorMessage(e));
+    }
   };
 
   return (
@@ -44,6 +59,13 @@ export function ConnectionManagerDialog() {
                 </button>
                 <Button size="sm" variant="ghost" onClick={() => connect(c.id)}>
                   Open
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setDeleting({ id: c.id, name: c.name || `${c.host}/${c.database}` })}
+                >
+                  <Trash2 className="size-4 text-destructive" />
                 </Button>
               </div>
             ))}
@@ -81,6 +103,26 @@ export function ConnectionManagerDialog() {
             )}
           </div>
         </div>
+
+        <Dialog open={deleting !== null} onOpenChange={(open) => !open && setDeleting(null)}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Delete connection?</DialogTitle>
+            </DialogHeader>
+            <p className="text-sm text-muted-foreground">
+              This will delete "{deleting?.name}". This cannot be undone.
+            </p>
+            {deleteError && <p className="text-sm text-red-500">{deleteError}</p>}
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setDeleting(null)}>
+                Cancel
+              </Button>
+              <Button variant="destructive" onClick={handleDelete}>
+                Delete
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </DialogContent>
     </Dialog>
   );

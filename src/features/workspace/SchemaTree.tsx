@@ -11,12 +11,14 @@ function NamespaceNode({
   connId,
   namespace,
   filter,
+  isFirst,
 }: {
   connId: string;
   namespace: string;
   filter: string;
+  isFirst: boolean;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(isFirst);
   const openTable = useWorkspace((s) => s.openTable);
   const refreshNonce = useWorkspace((s) => s.refreshNonce);
 
@@ -96,8 +98,8 @@ export function SchemaTree({ connId }: { connId: string }) {
       <div className="flex-1 overflow-y-auto">
         {isLoading && <span className="text-xs text-muted-foreground">Loading schemas...</span>}
         {error != null && <span className="text-xs text-red-500">Failed to load schemas</span>}
-        {namespaces.map((ns) => (
-          <NamespaceNode key={ns} connId={connId} namespace={ns} filter={filter} />
+        {namespaces.map((ns, i) => (
+          <NamespaceNode key={ns} connId={connId} namespace={ns} filter={filter} isFirst={i === 0} />
         ))}
       </div>
     </div>
