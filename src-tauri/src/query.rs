@@ -302,7 +302,7 @@ async fn fetch_keyset(
         None => format!("SELECT * FROM {table} ORDER BY {pk_quoted} LIMIT {limit}"),
     };
 
-    let (columns, rows) = run_page_query(pool, &sql, last).await?;
+    let (columns, rows) = run_page_query(pool, &sql, last, Some((req.namespace.as_str(), req.table.as_str()))).await?;
 
     let pk_index = columns.iter().position(|c| c.name == pk);
     let next_cursor = if rows.len() < limit {
@@ -335,7 +335,7 @@ async fn fetch_offset(
         None => String::new(),
     };
     let sql = format!("SELECT * FROM {table}{order} LIMIT {limit} OFFSET {offset}");
-    let (columns, rows) = run_page_query(pool, &sql, None).await?;
+    let (columns, rows) = run_page_query(pool, &sql, None, Some((req.namespace.as_str(), req.table.as_str()))).await?;
     let next_cursor = if rows.len() < limit {
         None
     } else {
@@ -348,9 +348,11 @@ async fn run_page_query(
     pool: &DbPool,
     sql: &str,
     keyset_bind: Option<i64>,
+    table_info: Option<(&str, &str)>,
 ) -> Result<(Vec<ColumnMeta>, Vec<Vec<Value>>), AppError> {
     let mut columns = vec![];
     let mut rows = vec![];
+
     match pool {
         DbPool::Postgres(p) => {
             let mut q = sqlx::query(sql);
@@ -358,11 +360,17 @@ async fn run_page_query(
                 q = q.bind(v);
             }
             let fetched = q.fetch_all(p).await?;
-            for row in &fetched {
-                if columns.is_empty() {
+            for (i, row) in fetched.iter().enumerate() {
+                if i == 0 {
                     columns = pg_columns(row);
                 }
                 rows.push(pg_row_to_values(row));
+            }
+            if columns.is_empty() {
+                if let Some((ns, table)) = table_info {
+                    let col_infos = list_columns(pool, ns, table).await?;
+                    columns = col_infos.into_iter().map(|c| ColumnMeta { name: c.name, type_name: c.data_type }).collect();
+                }
             }
         }
         DbPool::MySql(p) => {
@@ -371,11 +379,17 @@ async fn run_page_query(
                 q = q.bind(v);
             }
             let fetched = q.fetch_all(p).await?;
-            for row in &fetched {
-                if columns.is_empty() {
+            for (i, row) in fetched.iter().enumerate() {
+                if i == 0 {
                     columns = mysql_columns(row);
                 }
                 rows.push(mysql_row_to_values(row));
+            }
+            if columns.is_empty() {
+                if let Some((ns, table)) = table_info {
+                    let col_infos = list_columns(pool, ns, table).await?;
+                    columns = col_infos.into_iter().map(|c| ColumnMeta { name: c.name, type_name: c.data_type }).collect();
+                }
             }
         }
     }
