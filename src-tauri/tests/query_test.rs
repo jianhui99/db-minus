@@ -30,6 +30,15 @@ async fn mysql_select_returns_rows() {
 }
 
 #[tokio::test]
+async fn mysql_timestamp_column_decodes_to_rfc3339() {
+    let pool = connect(&mysql_config(), PASSWORD).await.unwrap();
+    let r = execute_sql(&pool, "SELECT created_at FROM users ORDER BY id LIMIT 1").await.unwrap();
+    let value = r.rows[0][0].as_str().expect("TIMESTAMP should decode to a string, not fall back to <timestamp>");
+    assert!(value.contains('T'), "expected RFC3339-ish format, got {value}");
+    assert!(value.ends_with("+00:00"), "expected UTC offset suffix, got {value}");
+}
+
+#[tokio::test]
 async fn pg_types_demo_serializes() {
     let pool = connect(&pg_config(), PASSWORD).await.unwrap();
     let r = execute_sql(&pool, "SELECT id, payload, raw, ratio, born, wake FROM types_demo ORDER BY payload NULLS LAST").await.unwrap();

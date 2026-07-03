@@ -3,6 +3,7 @@ use crate::dialect::connect_url;
 use crate::error::AppError;
 use sqlx::mysql::MySqlPoolOptions;
 use sqlx::postgres::PgPoolOptions;
+use sqlx::Executor;
 use std::collections::HashMap;
 use std::time::Duration;
 use tokio::sync::RwLock;
@@ -42,9 +43,16 @@ pub async fn connect(config: &ConnectionConfig, password: &str) -> Result<DbPool
                 .connect(&url)
                 .await
                 .map(DbPool::Postgres),
+            // TIMESTAMP 列以 UTC 存储、按会话 time_zone 解释；固定为 +00:00
+            // 使 sqlx 的 DateTime<Utc> 解码假设成立，与服务器默认时区配置无关
             Driver::MySql => MySqlPoolOptions::new()
                 .max_connections(MAX_CONNECTIONS)
                 .acquire_timeout(CONNECT_TIMEOUT)
+                .after_connect(|conn, _meta| {
+                    Box::pin(async move {
+                        conn.execute("SET time_zone = '+00:00'").await.map(|_| ())
+                    })
+                })
                 .connect(&url)
                 .await
                 .map(DbPool::MySql),

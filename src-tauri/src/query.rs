@@ -113,7 +113,10 @@ fn mysql_value_typed(row: &MySqlRow, i: usize, type_name: &str) -> Value {
         "DOUBLE" => try_decode!(row, i, f64 => Value::from),
         "DECIMAL" => try_decode!(row, i, rust_decimal::Decimal => |v: rust_decimal::Decimal| Value::from(v.to_string())),
         "JSON" => try_decode!(row, i, Value => |v| v),
-        "DATETIME" | "TIMESTAMP" => try_decode!(row, i, chrono::NaiveDateTime => |v: chrono::NaiveDateTime| Value::from(v.to_string())),
+        // DATETIME 无时区、按字面量存取；TIMESTAMP 实际以 UTC 存储，需按 UTC 解码
+        // （依赖 pool.rs 建连时 `SET time_zone = '+00:00'`）
+        "DATETIME" => try_decode!(row, i, chrono::NaiveDateTime => |v: chrono::NaiveDateTime| Value::from(v.to_string())),
+        "TIMESTAMP" => try_decode!(row, i, chrono::DateTime<chrono::Utc> => |v: chrono::DateTime<chrono::Utc>| Value::from(v.to_rfc3339())),
         "DATE" => try_decode!(row, i, chrono::NaiveDate => |v: chrono::NaiveDate| Value::from(v.to_string())),
         "TIME" => try_decode!(row, i, chrono::NaiveTime => |v: chrono::NaiveTime| Value::from(v.to_string())),
         t if t.contains("BLOB") || t.contains("BINARY") => try_decode!(row, i, Vec<u8> => |v: Vec<u8>| Value::from(hex_string(&v))),
